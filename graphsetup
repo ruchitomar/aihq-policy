@@ -1,0 +1,500 @@
+# AI coding workstation setup (Windows, macOS, Linux)
+
+Instructions for a coding agent (Claude Code or Codex) to set up a machine to
+match a reference workstation as of 2026-10-06. This document describes the
+**target state, exact values and checks**. The agent chooses the commands for
+the host OS and shell.
+
+## How to use
+
+1. Install Git and Claude Code or Codex, and log in.
+2. Start the agent anywhere and paste:
+
+```text
+Set up this machine by following the instructions below. Detect the OS, CPU
+architecture and shell first, and use that platform's normal commands. Work
+through the sections in order. After each section, run its checks; if a check
+fails and the fix is not obvious and safe, stop and show me the output. Back up
+every existing config file before changing it, and merge — never replace —
+existing settings. Ask me before anything that needs admin/sudo, a login, or
+changes inside a project repository. Ask me which Git repositories to index.
+Finish with the report in section 11.
+
+<paste the rest of this document>
+```
+
+## Ground rules for the agent
+
+- **Merge, don't overwrite.** Each user config may already hold other servers,
+  hooks, permissions or instructions. Back up each file first (for example to
+  `~/ai-setup-backups/<timestamp>/`). Then add or update only the entries named
+  here.
+- **Don't substitute.** If an exact version or option is unavailable, stop and
+  report it. Do not pick a different version or an unfiltered alternative.
+- **Never run these.** Each writes its own competing configuration:
+  - `code-review-graph install`
+  - `codebase-memory-mcp install` or `uninstall`
+  - `serena setup` or `serena-hooks`
+  - `context-mode`, ECC, or any `/plugin install` for these tools
+  - the skills bundle's `/install-commit-gate`
+- **No credentials in chat or logs.** The user does every login themselves.
+- **Installing is not verifying.** A server is set up only when a fresh
+  session lists it and answers a real call.
+
+## Paths by platform
+
+`~` means the user's home folder (`%USERPROFILE%` on Windows).
+
+| Item | Windows | macOS | Linux |
+|---|---|---|---|
+| uv tool executables | `~\.local\bin\*.exe` | `~/.local/bin/` | `~/.local/bin/` |
+| codebase-memory-mcp binary | `%LOCALAPPDATA%\Programs\codebase-memory-mcp\codebase-memory-mcp.exe` | `~/.local/bin/codebase-memory-mcp` | `~/.local/bin/codebase-memory-mcp` |
+| Serena config | `~/.serena/serena_config.yml`, `~/.serena/contexts/` | same | same |
+| Claude Code | `~/.claude.json` (user MCP servers), `~/.claude/settings.json`, `~/.claude/CLAUDE.md` | same | same |
+| Codex | `~/.codex/config.toml`, `~/.codex/hooks.json`, `~/.codex/AGENTS.md` | same | same |
+| VS Code user `mcp.json` | `%APPDATA%\Code\User\` | `~/Library/Application Support/Code/User/` | `~/.config/Code/User/` |
+
+Always register servers with **absolute executable paths**. Resolve them with
+`uv tool dir --bin`, `which` or `Get-Command`; do not assume them.
+
+---
+
+## 1. Prerequisites
+
+Install whatever is missing, using the platform's standard package manager:
+winget on Windows, Homebrew on macOS, or the distribution's manager on Linux.
+
+| Tool | Requirement |
+|---|---|
+| Git, GitHub CLI (`gh`) | any current version |
+| Node.js | ≥ 22 via `fnm` (an LTS release is fine), with fnm's shell initialiser added to the user's shell profile |
+| uv | current; it supplies Python 3.13 (`uv python install 3.13`) |
+| ripgrep, fd, jq | current |
+| Claude Code | official native installer for the OS |
+| Codex CLI | `npm install -g @openai/codex` (`npm.cmd` on Windows if script policy blocks `npm.ps1`) |
+
+The user logs in: `gh auth login`, Claude Code `/login` and `codex login`.
+
+**Check:** every tool prints its version; `uv python find 3.13` returns a path;
+`gh auth status` succeeds.
+
+---
+
+## 2. code-review-graph 2.3.9
+
+**What it gives the agent:** change-impact analysis and review context from a
+Tree-sitter graph of the repo.
+
+- Install it as an isolated uv tool on Python 3.13: package
+  `code-review-graph==2.3.9`.
+- No other setup. Do **not** run its `install` subcommand.
+- The MCP launch arguments are
+  `serve --tools get_minimal_context_tool,build_or_update_graph_tool,detect_changes_tool,get_impact_radius_tool,get_review_context_tool,query_graph_tool`.
+  They expose exactly these 6 tools.
+- Environment: `CRG_TOOL_TIMEOUT=120`, `PYTHONUTF8=1`.
+- Timeouts: startup 30 s, tool call 300 s.
+
+**Check:** `code-review-graph --version` prints `2.3.9`.
+
+---
+
+## 3. codebase-memory-mcp 0.11.0
+
+**What it gives the agent:** an architecture and symbol graph with
+cross-file tracing.
+
+- Download release `v0.11.0` from `github.com/DeusData/codebase-memory-mcp`.
+  Pick the asset for this OS and architecture, for example
+  `codebase-memory-mcp-windows-amd64.zip`, `codebase-memory-mcp-darwin-arm64.tar.gz`
+  or `codebase-memory-mcp-linux-amd64.tar.gz`. On older Linux, use the
+  `-portable` asset.
+- Verify the SHA-256 against the release's `checksums.txt`, and stop on a
+  mismatch.
+- Install only the binary at the path in the platform table. On macOS, clear
+  the quarantine attribute if Gatekeeper blocks it. Do not let any installer
+  edit agent configs (the release `install` script supports `--skip-config`).
+- Configure it with `codebase-memory-mcp config set ui_enabled false` and
+  `codebase-memory-mcp config set auto_index false`.
+- If `codebase-memory-mcp daemon status` shows a daemon this setup started,
+  stop it. Clients launch their own stdio process.
+- MCP launch: the binary with **no arguments**.
+- Tool restriction, applied at the client:
+  - **Allow (11):** `list_projects`, `index_status`, `index_repository`,
+    `search_graph`, `trace_path`, `get_code_snippet`, `query_graph`,
+    `get_graph_schema`, `get_architecture`, `check_index_coverage`, `manage_adr`
+  - **Hide (6):** `detect_changes`, `search_code`, `get_file_outline`,
+    `compare_graphs`, `delete_project`, `ingest_traces`
+- Timeouts: startup 45 s, tool call 600 s.
+
+**Check:** `--version` prints `0.11.0`; `config list` shows `ui_enabled = false`
+and `auto_index = false`.
+
+---
+
+## 4. Serena 1.7.0
+
+**What it gives the agent:** exact symbol lookup and symbol-level refactoring
+through language servers.
+
+- Install it as an isolated uv tool on Python 3.13: package
+  `serena-agent==1.7.0`.
+- If `~/.serena/serena_config.yml` does not exist, run `serena init` once. Then
+  set these keys and keep everything else:
+
+  ```yaml
+  web_dashboard: false
+  web_dashboard_open_on_launch: false
+  gui_log_window: false
+  tool_timeout: 240
+  ```
+
+- Create four context files in `~/.serena/contexts/`: `claude-code.yml`,
+  `codex.yml`, `ide.yml` and `vscode.yml`. They override Serena's built-in
+  contexts of the same name. Every file contains this block:
+
+  ```yaml
+  fixed_tools:
+    - initial_instructions
+    - activate_project
+    - get_symbols_overview
+    - find_symbol
+    - find_referencing_symbols
+    - find_implementations
+    - find_declaration
+    - get_diagnostics_for_file
+    - replace_symbol_body
+    - insert_before_symbol
+    - insert_after_symbol
+    - rename_symbol
+    - safe_delete_symbol
+    - restart_language_server
+  tool_description_overrides: {}
+  single_project: true
+  ```
+
+  Each file also gets its own `description` and `prompt`:
+
+  **claude-code.yml** (also add `structured_tool_output: false`):
+
+  ```yaml
+  description: Claude Code - exact symbol navigation and symbol-level refactors
+  prompt: |
+    Use Serena only for exact symbol work: definitions, references, implementations,
+    declarations, diagnostics, and symbol-level edits (rename, replace body, insert
+    before/after, safe delete). Use your own tools for ordinary file reads, line-level
+    edits, text search, and shell commands. Before using your own Edit on a file you only
+    inspected through Serena, Read it first.
+  ```
+
+  **codex.yml**:
+
+  ```yaml
+  description: Codex - exact symbol navigation and symbol-level refactors
+  prompt: |
+    Use Serena only for exact symbol work: definitions, references, implementations,
+    declarations, diagnostics, and symbol-level edits (rename, replace body, insert
+    before/after, safe delete). Use your own shell and apply_patch tools for ordinary
+    file reads, line-level edits, text search, and commands.
+  ```
+
+  **ide.yml** and **vscode.yml** (identical):
+
+  ```yaml
+  description: IDE agents - exact symbol navigation and symbol-level refactors
+  prompt: |
+    Use Serena only for exact symbol work: definitions, references, implementations,
+    declarations, diagnostics, and symbol-level edits (rename, replace body, insert
+    before/after, safe delete). Use your own tools for ordinary file reads, line-level
+    edits, text search, and shell commands.
+  ```
+
+- MCP launch arguments:
+  `start-mcp-server --context <CONTEXT> --project-from-cwd --enable-web-dashboard false --log-level WARNING`.
+  Use `claude-code` for Claude, `codex` for Codex, `vscode` for VS Code and
+  `ide` for everything else.
+- Environment: `SERENA_USAGE_REPORTING=false`.
+- Timeouts: startup 60 s, tool call 300 s.
+
+**Check:** `serena --version` prints `1.7.0`; `serena context list` shows the
+four contexts without errors; the four config keys read back as set.
+
+---
+
+## 5. Skills bundle (aih-extensions), without the git guard
+
+**What it gives the agent:**
+
+- **Matt Pocock's lifecycle skills:** `/grill-with-docs` → `/to-spec` →
+  `/to-tickets` → `/implement` → `/code-review` → `/retro`, plus `/tdd`,
+  `/diagnosing-bugs`, `/codebase-design` and others.
+- **Addy Osmani's specialists:** security, performance, observability, API
+  design, CI/CD, migrations, frontend and more.
+- **Reviewer agents:** `code-reviewer`, `security-auditor`, `test-engineer`
+  and `web-performance-auditor`.
+- **Commands:** `/ship` and `/webperf`.
+- **References:** seven checklists.
+
+That is 46 skills in total.
+
+1. Clone `https://github.com/samartomar/aih-extensions` into a user tools
+   folder, such as `~/tools/aih-extensions`. Check out the reviewed commit
+   `93b4290f1896894e6fd3903fafd3a660d670fb2a`.
+2. Read its `README.md` and `scripts/setup.mjs`. Then preview the plan with
+   `node scripts/setup.mjs install --tools claude,codex`. Add `kimi` or
+   `opencode` if those clients are installed. Show the plan to the user and
+   apply it with `--yes` once they agree.
+3. The installer registers hooks from `~/.aih-extensions/hooks/`. Then
+   **remove only the git-guard registration**, leaving the rest:
+
+   | Client | File | Change |
+   |---|---|---|
+   | Claude | `~/.claude/settings.json` → `hooks` | Delete hook entries whose command runs `git-guard.mjs`. Keep `skill-guard.mjs` (PreToolUse, matcher `Skill`) and `lanes-card.mjs` (SessionStart, `startup\|clear\|compact`). Remove a group or event only if it becomes empty. |
+   | Codex | `~/.codex/hooks.json` | Delete only the `git-guard.mjs` entry and keep `lanes-card.mjs`. |
+   | Kimi | `~/.kimi-code/config.toml` | Delete the `# >>> aih-extensions` … `# <<< aih-extensions` block, which holds only the git guard at this commit. |
+   | OpenCode | `~/.config/opencode/plugins/aih-extensions.js` | Keep the `createPlugin` import, but wrap its result and `delete hooks['tool.execute.before']`. |
+
+   This must be redone after any reinstall of the bundle, because the
+   installer adds the guard back.
+
+4. The installer also sets `skillOverrides: { "simplify": "off" }` in Claude
+   settings, because `/code-simplification` replaces the built-in. Keep it.
+
+**Check:**
+
+- `node scripts/setup.mjs status` reports the commit;
+- `~/.claude/skills` and `~/.codex/skills` (ignoring `.system`) each hold 46
+  skill folders;
+- both hook files exist under `~/.aih-extensions/hooks/`;
+- the string `git-guard` appears in no client config.
+
+---
+
+## 6. Register the servers in each client
+
+Register the three servers at **user scope**, with the launch arguments,
+environment, timeouts and tool restrictions from sections 2–4.
+
+**Claude Code**
+
+1. Use `claude mcp add -s user -t stdio <name> [-e KEY=VALUE ...] -- <absolute command> <args>`
+   for `code-review-graph`, `codebase-memory-mcp` and `serena`. If an entry
+   with the same name already exists, remove it first.
+2. Merge into `~/.claude/settings.json`:
+   - `env.MCP_TIMEOUT = "60000"`;
+   - `permissions.deny` additions:
+     `mcp__codebase-memory-mcp__detect_changes`,
+     `mcp__codebase-memory-mcp__search_code`,
+     `mcp__codebase-memory-mcp__get_file_outline`,
+     `mcp__codebase-memory-mcp__compare_graphs`,
+     `mcp__codebase-memory-mcp__delete_project`,
+     `mcp__codebase-memory-mcp__ingest_traces`.
+
+**Codex**
+
+Add three `[mcp_servers.<name>]` tables to `~/.codex/config.toml`. If a table
+with that name already exists, stop and ask.
+
+```toml
+[mcp_servers.code-review-graph]
+command = "<abs path>/code-review-graph"
+args = ["serve", "--tools", "get_minimal_context_tool,build_or_update_graph_tool,detect_changes_tool,get_impact_radius_tool,get_review_context_tool,query_graph_tool"]
+env = { CRG_TOOL_TIMEOUT = "120", PYTHONUTF8 = "1" }
+startup_timeout_sec = 30
+tool_timeout_sec = 300
+
+[mcp_servers.codebase-memory-mcp]
+command = "<abs path>/codebase-memory-mcp"
+args = []
+env_vars = ["CBM_CACHE_DIR", "CBM_RUNTIME_DIR"]
+enabled_tools = ["list_projects", "index_status", "index_repository", "search_graph", "trace_path", "get_code_snippet", "query_graph", "get_graph_schema", "get_architecture", "check_index_coverage", "manage_adr"]
+startup_timeout_sec = 45
+tool_timeout_sec = 600
+
+[mcp_servers.serena]
+command = "<abs path>/serena"
+args = ["start-mcp-server", "--context", "codex", "--project-from-cwd", "--enable-web-dashboard", "false", "--log-level", "WARNING"]
+env = { SERENA_USAGE_REPORTING = "false" }
+enabled_tools = ["initial_instructions", "activate_project", "get_symbols_overview", "find_symbol", "find_referencing_symbols", "find_implementations", "find_declaration", "get_diagnostics_for_file", "replace_symbol_body", "insert_before_symbol", "insert_after_symbol", "rename_symbol", "safe_delete_symbol", "restart_language_server"]
+startup_timeout_sec = 60
+tool_timeout_sec = 300
+```
+
+On Windows, use single-quoted TOML strings (`'C:\...'`) or forward slashes for
+paths. Tell the user to run `/hooks` once in Codex and trust the lanes-card hook.
+
+**Other clients (only if installed; ask before each one)**
+
+Add only missing entries and keep existing ones unchanged. Check each client's
+current documentation for the schema.
+
+| Client | User config | Notes |
+|---|---|---|
+| Kimi Code | `~/.kimi-code/mcp.json` → `mcpServers` | CBM `disabledTools` = the hide list; Serena context `ide`; graph `toolTimeoutMs: 150000`; Serena `startupTimeoutMs: 60000` |
+| Kiro | `~/.kiro/settings/mcp.json` → `mcpServers` | CBM `disabledTools` = the hide list; `disabled: false`; graph timeout 150000, Serena timeout 120000; the IDE and CLI share the file |
+| OpenCode | `~/.config/opencode/opencode.json` → `mcp` | `type: "local"`, command as an array, `environment`; hide the 6 CBM tools through the `tools` map using the tool names it actually discovers |
+| Cline | its `cline_mcp_settings.json` | Graph and Serena only. **No CBM**, because Cline cannot hide tools and auto-approves |
+| Cursor IDE | `~/.cursor/mcp.json` → `mcpServers` | CBM `enabledTools` = the allow list; graph args add `--repo ${workspaceFolder}`; Serena uses `--project ${workspaceFolder}` instead of `--project-from-cwd` |
+| VS Code (Copilot) | user `mcp.json` → `servers` | `type: "stdio"`, `cwd: "${workspaceFolder}"`, Serena context `vscode`; the user unticks the 6 CBM tools in Chat → Configure Tools |
+
+**Check:** in a **fresh** session in each configured client, all three
+servers connect. Claude's `/mcp` shows code-review-graph with 6 tools, Serena
+with about 14 (one can be hidden once a project is active), and CBM's 6 hidden
+tools denied.
+
+---
+
+## 7. Global agent instructions (AGENTS.md)
+
+Write `~/.codex/AGENTS.md` with the content below. If the file already exists,
+merge this content in and tell the user what was there before. Write
+`~/.claude/CLAUDE.md` so that it imports the same file:
+
+```markdown
+# Shared personal instructions
+
+@<absolute home path, forward slashes>/.codex/AGENTS.md
+```
+
+Content of `~/.codex/AGENTS.md`:
+
+````markdown
+1. Audience Calibration (Matching Abstraction Levels)
+Clarity isn't about dumbing things down; it's about targeting the right abstraction layer. If you are configuring local AI agent harnesses or managing enterprise data pipelines, explaining the basic definition of a virtual machine is just noise. I parse the vocabulary and complexity of your prompt to ensure the explanation sits exactly at your operational level.
+
+2. Progressive Disclosure (Bottom Line Up Front)
+I structure responses top-down. The first sentence delivers the verdict or the core concept. The subsequent paragraphs unpack the mechanics (the "how" and "why"). This allows you to stop reading the moment you have the context you need, without having to dig through paragraphs of foundational preamble.
+
+3. Translating "Nouns" into "Verbs" (Functional Definitions)
+Jargon usually describes a static concept (a noun). To make it clear, I translate it into an action (a verb) that describes the actual problem it solves. For example, instead of defining "Model Context Protocol" strictly as a standardized client-server architecture, I explain that it allows your AI coding agent to autonomously read your codebase memory without you having to copy-paste context.
+
+4. Visual Syntax Highlighting
+Just as code is unreadable without proper indentation and syntax highlighting, text is unreadable without structure. I use Markdown to create visual hierarchy—bolding core terms, using bulleted lists for independent variables, and leveraging tables for direct comparisons. This turns a dense block of text into a scannable interface.
+
+5. Grounding through Structural Analogy
+When a concept is highly abstract, mapping it to a known physical or architectural paradigm bridges the gap instantly. Explaining a complex failover network is often easier when mapped to a physical plumbing analogy than by describing the raw packet-routing algorithms.
+
+## Code-intelligence tools
+
+Three MCP servers are installed for source navigation. Use them before broad
+file-by-file reading, then confirm findings in the source and tests.
+
+- **code-review-graph**: change impact and review context. Use
+  `detect_changes_tool` / `get_impact_radius_tool` / `get_review_context_tool`
+  before reviewing or changing shared code, and `query_graph_tool` for callers,
+  callees and tests. Run `build_or_update_graph_tool` after edits, branch
+  switches or pulls before trusting results.
+- **codebase-memory-mcp**: architecture and symbol graph. Call `list_projects`
+  and use the exact returned project name; then `search_graph`, `trace_path`,
+  `get_code_snippet`, `get_architecture`. Re-run `index_repository` after
+  significant changes and check `check_index_coverage` for cited paths.
+- **Serena**: exact symbol definitions, references, implementations,
+  diagnostics and symbol-level edits. Call `initial_instructions` first. Use
+  ordinary file tools for plain reads, text search and line edits.
+
+When the session starts in a folder that holds several repos rather than inside
+one repo, name the target explicitly: `repo_root="<abs path>"` for
+code-review-graph, the `project` from `list_projects` for codebase-memory-mcp,
+and `activate_project` on one repo per Serena session. For deep work in one
+repo, start the session inside that repo. Index and graph results can be stale;
+the working tree is the source of truth.
+
+## Skills
+
+The aih-extensions bundle supplies Matt Pocock's lifecycle skills
+(`/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement` →
+`/code-review` → `/retro`; `/diagnosing-bugs`, `/codebase-design`, `/tdd`) and
+on-demand specialists (`/ask-sam` routes to them). When unsure which to use,
+run `/ask-matt`. Do not vendor skill copies into project repositories.
+````
+
+Each project should also have its own short `AGENTS.md`, plus a `CLAUDE.md`
+containing `@AGENTS.md`. It should state:
+
+- the build, test and lint commands;
+- the source layout and any generated folders not to edit;
+- the branch and PR conventions.
+
+Running `/setup-matt-pocock-skills` once in each repo records its issue
+tracker, triage labels and docs location.
+
+**Check:** a fresh Claude session and a fresh Codex session can each restate
+rule 2 and name the three servers without being told.
+
+---
+
+## 8. Prepare each repository
+
+Ask the user which Git repositories to index. Only index repository roots,
+never a parent folder that holds several repos. For each one, from its root:
+
+1. **Graph:** run `code-review-graph build --repo <root>`. Keep the database in
+   the default in-repo `.code-review-graph/` folder, because that is where the
+   MCP server reads it. Do not pass `--data-dir`.
+2. **Memory index:** run `codebase-memory-mcp cli index_repository --repo-path <root>`.
+3. **Serena:** run `serena project health-check` **first**; this creates
+   `.serena/project.yml` without prompting. Then run `serena project index`.
+   Running `index` first asks interactive "Enable <language>?" questions that
+   fail in a non-interactive shell.
+4. **Keep Git clean:** if `.serena/` and `.code-review-graph/` are not already
+   ignored, add them to the repo's `.git/info/exclude`, not to the tracked
+   `.gitignore`.
+5. If the repo has a tracked `.mcp.json` defining `code-review-graph` or
+   `codebase-memory-mcp`, it overrides the user-scope entry. Report it to the
+   user; do not edit it without asking.
+
+**Check:**
+
+- `code-review-graph status --repo <root>` shows nodes > 0 and edges > 0;
+- `codebase-memory-mcp cli list_projects` lists the repo with nodes and edges;
+- both Serena commands exit 0;
+- `git status` shows nothing new.
+
+---
+
+## 9. Keeping indexes fresh
+
+Nothing here refreshes code-review-graph in the background. After pulls,
+branch switches or large edits, the agent should call
+`build_or_update_graph_tool` and `index_repository` before relying on the
+results. (The AGENTS.md text in section 7 tells it to.) Do **not** install
+background Git refresh hooks. They skip worktrees and hide failures.
+
+---
+
+## 10. Final verification
+
+In a fresh session of each configured client:
+
+1. The three servers are connected, with the tool counts and restrictions from
+   section 6.
+2. One real call to each server succeeds: `list_projects` (CBM),
+   `get_minimal_context_tool` on an indexed repo (graph), and
+   `initial_instructions` (Serena).
+3. Typing `/ask-matt` loads a skill. In Claude, `/ship` is listed.
+4. The lanes-card note appears at session start. In Codex this happens after
+   the hook is trusted.
+5. No client config contains `git-guard`.
+
+---
+
+## 11. Report
+
+Give the user a table with one row per section (1–10):
+
+- the result (OK, PENDING or BLOCKED);
+- the actual versions installed;
+- the config files changed, and where their backups are;
+- per repository: graph nodes and edges, CBM nodes and edges, and the Serena
+  health result;
+- anything the user still has to do: logins, Codex `/hooks` trust, the VS Code
+  tool unticks, and restarting clients.
+
+## Undo
+
+- Remove the three server entries from each client: `claude mcp remove <name> -s user`,
+  and delete the tables from Codex's `config.toml`.
+- Restore the backed-up configs.
+- Run `node scripts/setup.mjs uninstall --yes` in the aih-extensions checkout.
+- Run `uv tool uninstall code-review-graph serena-agent`.
+- Delete the codebase-memory-mcp binary and the per-repo `.code-review-graph/`
+  and `.serena/` folders only if the user asks.
